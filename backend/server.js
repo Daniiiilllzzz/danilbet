@@ -3,6 +3,7 @@ import cors from 'cors';
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import jwt from 'jsonwebtoken';
+import axios from 'axios';
 
 dotenv.config();
 
@@ -10,15 +11,17 @@ const app = express();
 app.use(express.json());
 app.use(cors());
 
-mongoose.connect(process.env.MONGO_URI ?? '', {
-  autoIndex: true,
-});
+// --- Database ---
+mongoose
+  .connect(process.env.MONGO_URI ?? '', { autoIndex: true })
+  .then(() => console.log('Mongo connected'))
+  .catch((err) => console.error('Mongo error', err));
 
 const SECRET = process.env.JWT_SECRET ?? 'CHANGE_ME_IN_PRODUCTION';
 
 const userSchema = new mongoose.Schema({
   username: { type: String, unique: true },
-  password: String, // TODO: hash with bcrypt before production
+  password: String, // TODO: hash with bcrypt in production
   balance: { type: Number, default: 1000 },
 });
 
@@ -33,6 +36,7 @@ const betSchema = new mongoose.Schema({
 const User = mongoose.model('User', userSchema);
 const Bet = mongoose.model('Bet', betSchema);
 
+// --- Auth ---
 function parseToken(authHeader) {
   if (!authHeader) return null;
   const parts = authHeader.split(' ');
@@ -53,6 +57,34 @@ function auth(req, res, next) {
   }
 }
 
+// --- Odds (live) ---
+app.get('/odds', async (req, res) => {
+  const apiKey = process.env.THE_ODDS_API_KEY;
+  if (!apiKey) return res.status(500).send('Missing odds API key');
+
+  const sport = req.query.sport || 'soccer_epl';
+
+  try {
+    const resp = await axios.get(
+      `https://api.the-odds-api.com/v4/sports/${sport}/odds/`,
+      {
+        params: {
+          regions: 'eu',
+          markets: 'h2h',
+          apiKey,
+        },
+      }
+    );
+
+    res.send(resp.data);
+  } catch (err) {
+    const status = err.response?.status || 500;
+    const payload = err.response?.data || 'Failed to fetch odds';
+    res.status(status).send(payload);
+  }
+});
+
+// --- App routes ---
 app.post('/register', async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) return res.status(400).send('Missing fields');
